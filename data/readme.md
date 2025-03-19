@@ -1,0 +1,2 @@
+BTCUSDT-trades-2025-01-01.csv is the only tick data i can download easily, if you have way of downloading any tick data, please tell me.
+the raw data can be found at https://data.binance.vision/?prefix=data/futures/um/daily/trades/BTCUSDT/
