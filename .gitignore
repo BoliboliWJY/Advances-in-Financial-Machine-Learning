@@ -5,3 +5,8 @@
 *.out
 *.synctex.gz
 *.toc
+/data
+*.pyc
+*.pyc
+/__pycache__
+/__pycache__

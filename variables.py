@@ -1,4 +1,7 @@
-tick_data_path = "data/BTCUSDT-trades-2025-01-01.csv"
+class TickData_path:
+    tick_data_path = "data/BTCUSDT-trades-2025-01-01.csv"
+    tick_data_path_2 = "data/ETHUSDT-trades-2025-01-01.csv"
+    tick_data_path_3 = "data/ETHBTC-trades-2025-01-01.csv"
 
 class TickData_col:
     id_col = 0

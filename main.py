@@ -1,4 +1,4 @@
-import Part1.CH01.ch01
+import Part1.CH01.ch01 as ch01
 
 if __name__ == "__main__":
-    Part1.CH01.ch01.main()
+    ch01.main()
