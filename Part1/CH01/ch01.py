@@ -228,6 +228,36 @@ def z_score_normalize(data: np.ndarray) -> np.ndarray:
     std = np.std(data, axis=0)
     normalized_data = (data - mean) / std
     return normalized_data
+
+   
+def cumsum_filter(df: pl.DataFrame, h: float):
+    S_high = 0
+    S_low = 0
+    S_high_list = []
+    S_low_list = []
+
+    
+    for i in range(len(df)):
+        if i == 0:
+            continue  # 跳过第一个数据点
+            
+        # 计算累积和
+        S_high = max(0, S_high + df["high"][i] - df["high"][i-1])
+        S_low = min(0, S_low + df["low"][i] - df["low"][i-1])
+        
+        # 当超过阈值时，记录数据点并重置累积和
+        if S_high > h:
+            S_high_list.append([df["datetime"][i], df["high"][i]])
+
+            S_high = 0  # 重要：需要重置累积和
+            
+        if S_low < -h:
+            S_low_list.append([df["datetime"][i], df["low"][i]])
+
+            S_low = 0  # 重要：需要重置累积和
+    
+    # 返回结果
+    return S_high_list, S_low_list
     
 
 def main():
@@ -236,13 +266,17 @@ def main():
     ETHUSDT_df = read_csv(TickData_path.tick_data_path_2)
     # print(df.head())
 
-    # question_1(BTCUSDT_df)
+    question_1(BTCUSDT_df)
     
     # question_2(BTCUSDT_df)
     
     
     # ETHBTC_df = read_csv(TickData_path.tick_data_path_3)
-    question_3(BTCUSDT_df, ETHUSDT_df)
+    # question_3(BTCUSDT_df, ETHUSDT_df)
+    
+    # question_4(BTCUSDT_df)
+    
+    # question_5(BTCUSDT_df)
     
     
     
@@ -250,26 +284,203 @@ def main():
 if __name__ == "__main__":
     main()
     
-def question_3(BTCUSDT_df, ETHUSDT_df):
-    BTCUSDT_dollar_bars = create_bars(BTCUSDT_df, "dollar", 2e7)
-    ETHUSDT_dollar_bars = create_bars(ETHUSDT_df, "dollar", 1e7)
+def question_5(df):
+    df_dollar_bars = create_bars(df, "dollar", 2e7)
+    h = 500
+    
+    S_low_list, S_high_list = cumsum_filter(df_dollar_bars, h)
+    
+    S_low_list = pl.DataFrame(S_low_list, schema=["datetime", "price"], orient="row")
+    S_high_list = pl.DataFrame(S_high_list, schema=["datetime", "price"], orient="row")
+    
+    S_abs_list = cumsum_absolute_filter(df_dollar_bars, h)
+    
+    
+    S_abs_list = pl.DataFrame(S_abs_list, schema=["datetime", "price"], orient="row")
+    
+    window_size = 3
+    rolling_std_cumsum_filter = pl.concat([S_high_list, S_low_list]).with_columns(
+        pl.col("price").rolling_std(window_size=window_size).alias("rolling_std")
+    )
+    rolling_std_cumsum_filter_abs = S_abs_list.with_columns(
+        pl.col("price").rolling_std(window_size=window_size).alias("rolling_std")
+    )
+    
+    fig, ax = plt.subplots(figsize=(14, 7))
+    ax.plot(rolling_std_cumsum_filter["rolling_std"], label="cumsum_filter", alpha=0.7)
+    ax.plot(rolling_std_cumsum_filter_abs["rolling_std"], label="cumsum_absolute_filter", alpha=0.7)
+    ax.set_title("Heteroscedasticity")
+    ax.legend()
+    plt.grid(True)
+    plt.show()
+    
+    cumsum_cv = rolling_std_cumsum_filter["rolling_std"].std() / rolling_std_cumsum_filter["rolling_std"].mean()
+    cumsum_cv_abs = rolling_std_cumsum_filter_abs["rolling_std"].std() / rolling_std_cumsum_filter_abs["rolling_std"].mean()
+    
+    print(f"cumsum_cv: {cumsum_cv}")
+    print(f"cumsum_cv_abs: {cumsum_cv_abs}")
+    
+    
+    
+    
+    
+    
+    
+def cumsum_absolute_filter(df: pl.DataFrame, h: float):
+    """
+    基于绝对收益的CUSUM过滤器
+    
+    参数:
+    df: 包含价格数据的DataFrame
+    h: 阈值参数
+    price_col: 用于计算收益的价格列名
+    
+    返回:
+    采样点列表，每个元素包含时间戳和价格
+    """
+    S_abs = 0  # 绝对收益的累积和
+    S_abs_list = []  # 采样点列表
+    
+    for i in range(len(df)):
+        if i == 0:
+            continue  # 跳过第一个数据点
+            
+        # 计算收益（价格变化）的绝对值
+        ret_abs = abs(df["close"][i] - df["close"][i-1])
+        # 累积绝对收益
+        S_abs += ret_abs
+        # 当超过阈值时，记录数据点并重置累积和
+        if S_abs > h:
+            S_abs_list.append([df["datetime"][i], df["close"][i]])
+            S_abs = 0  # 重置累积和
+    
+    return S_abs_list
+    
+    
+    
+    
+def question_4(df):
+    df_dollar_bars = create_bars(df, "dollar", 2e7)
+     
+    window_size = 20
+    # 计算5%的布林带
+    df_dollar_bars = df_dollar_bars.with_columns(
+        pl.col("close").rolling_mean(window_size=window_size).alias("ma"),
+        pl.col("close").rolling_std(window_size=window_size).alias("std"),
+        (pl.col("close").rolling_mean(window_size=window_size) + 1.96 * pl.col("close").rolling_std(window_size=window_size)).alias("upper"),
+        (pl.col("close").rolling_mean(window_size=window_size) - 1.96 * pl.col("close").rolling_std(window_size=window_size)).alias("lower")
+    )
+    
+    out_data_high = []
+    out_data_low = []
+    upper_count = 0
+    lower_count = 0
+    for i in range(len(df_dollar_bars)):
+        if i < window_size:
+            continue
+        if df_dollar_bars["high"][i] > df_dollar_bars["upper"][i]:
+            upper_count += 1
+            out_data_high.append([df_dollar_bars["datetime"][i], df_dollar_bars["high"][i]])
+        if df_dollar_bars["low"][i] < df_dollar_bars["lower"][i]:
+            lower_count += 1
+            out_data_low.append([df_dollar_bars["datetime"][i], df_dollar_bars["low"][i]])
+    out_data_high = pl.DataFrame(out_data_high, schema=["datetime", "price"], orient="row")
+    out_data_low = pl.DataFrame(out_data_low, schema=["datetime", "price"], orient="row")
+    # print(out_data_high)
+    # print(out_data_low)
+    
+    
+    
+    fig, ax = plt.subplots(figsize=(14, 7))
+    ax.plot(df_dollar_bars["datetime"], df_dollar_bars["ma"], label="MA", color="blue")
+    ax.plot(df_dollar_bars["datetime"], df_dollar_bars["upper"], label="Upper", color="red")
+    ax.plot(df_dollar_bars["datetime"], df_dollar_bars["lower"], label="Lower", color="green")
+    
+    # 绘制K线图
+    for i in range(len(df_dollar_bars)):
+        # 获取开盘、收盘、最高和最低价
+        # open_price = df_dollar_bars['open'][i]
+        # close_price = df_dollar_bars['close'][i]
+        high_price = df_dollar_bars['high'][i]
+        low_price = df_dollar_bars['low'][i]
+        
+        # 绘制上下影线
+        ax.plot([df_dollar_bars["datetime"][i], df_dollar_bars["datetime"][i]], [low_price, high_price], color='black', linewidth=1)
+    
+    ax.scatter([out_data_high["datetime"]], [out_data_high["price"]], color='red', linewidth=1, label="bollinger_high")
+    ax.scatter([out_data_low["datetime"]], [out_data_low["price"]], color='green', linewidth=1, label="bollinger_low")
+    
+    
+    
+    h = 200
+    S_high_list, S_low_list = cumsum_filter(df_dollar_bars, h)
+    # print(S_high_list, S_low_list)
+    
+    S_high_list = pl.DataFrame(S_high_list, schema=["datetime", "price"], orient="row")
+    S_low_list = pl.DataFrame(S_low_list, schema=["datetime", "price"], orient="row")
+    
+    ax.scatter(S_high_list["datetime"], S_high_list["price"], color='blue', linewidth=2, label="cumsum_high")
+    ax.scatter(S_low_list["datetime"], S_low_list["price"], color='orange', linewidth=2, label="cumsum_low")
+    
+    
+    ax.set_xlabel("time")
+    ax.set_ylabel("price")
+    ax.set_title("BTCUSDT Dollar Bars Kline")
+    ax.legend()
+    plt.grid(True, linestyle='--', alpha=0.5)
+    # plt.show()
+    
+    window_size = 3
+    rolling_std_bollinger_bands = pl.concat([out_data_high, out_data_low]).with_columns(
+        pl.col("price").rolling_std(window_size=window_size).alias("rolling_std")
+    )
+    rolling_std_cumsum_filter = pl.concat([S_high_list, S_low_list]).with_columns(
+        pl.col("price").rolling_std(window_size=window_size).alias("rolling_std")
+    )
+    
+    # print(rolling_std_bollinger_bands["rolling_std"])
+    # print(rolling_std_cumsum_filter["rolling_std"])
+    
+    # calculate the heteroscedasticity
+    bollinger_cv = rolling_std_bollinger_bands["rolling_std"].std() / rolling_std_bollinger_bands["rolling_std"].mean()
+    cumsum_cv = rolling_std_cumsum_filter["rolling_std"].std() / rolling_std_cumsum_filter["rolling_std"].mean()
+    
+    print(f"bollinger_cv: {bollinger_cv}")
+    print(f"cumsum_cv: {cumsum_cv}")
+    
+    fig, ax = plt.subplots(figsize=(14, 7))
+    ax.plot(rolling_std_bollinger_bands["rolling_std"], label="bollinger_bands", alpha=0.7)
+    ax.plot(rolling_std_cumsum_filter["rolling_std"], label="CUSUM", alpha=0.7)
+    ax.set_title("Heteroscedasticity")
+    ax.legend()
+    plt.grid(True)
+    plt.show()
+    
+    
+ 
+
+    
+def question_3(df_1, df_2):
+    df_1_dollar_bars = create_bars(df_1, "dollar", 2e7)
+    df_2_dollar_bars = create_bars(df_2, "dollar", 1e7)
+    # ETHUSDT_dollar_bars = create_bars(ETHUSDT_df, "dollar", 3.5e6)
     
     # we need as close length as possible, test it yourself
     # print(len(BTCUSDT_dollar_bars)) 
     # print(len(ETHUSDT_dollar_bars))
     
     # whatever log or diff, the result is the same
-    BTCUSDT_returns = np.diff(np.log(BTCUSDT_dollar_bars["close"]))
-    ETHUSDT_returns = np.diff(np.log(ETHUSDT_dollar_bars["close"]))
+    df_1_returns = np.diff(np.log(df_1_dollar_bars["close"]))
+    df_2_returns = np.diff(np.log(df_2_dollar_bars["close"]))
     
-    min_length = min(len(BTCUSDT_returns), len(ETHUSDT_returns))
-    BTCUSDT_returns = BTCUSDT_returns[:min_length]
-    ETHUSDT_returns = ETHUSDT_returns[:min_length]
+    min_length = min(len(df_1_returns), len(df_2_returns))
+    df_1_returns = df_1_returns[:min_length]
+    df_2_returns = df_2_returns[:min_length]
     
-    BTCUSDT_returns_normalized = z_score_normalize(BTCUSDT_returns)
-    ETHUSDT_returns_normalized = z_score_normalize(ETHUSDT_returns)
+    # BTCUSDT_returns = z_score_normalize(BTCUSDT_returns)
+    # ETHUSDT_returns = z_score_normalize(ETHUSDT_returns)
     
-    return_matrix = np.column_stack((BTCUSDT_returns_normalized, ETHUSDT_returns_normalized))
+    return_matrix = np.column_stack((df_1_returns, df_2_returns))
     
     # fig,ax = plt.subplots(figsize=(14,7))
     # ax.plot(BTCUSDT_returns, label="BTCUSDT")
@@ -281,15 +492,15 @@ def question_3(BTCUSDT_df, ETHUSDT_df):
     
     print("weights:", weights)
     
-    spread = ETHUSDT_returns - (weights[1] / weights[0]) * BTCUSDT_returns
+    spread = df_2_returns - (weights[1] / weights[0]) * df_1_returns
     
     fig,(ax1,ax2) = plt.subplots(2,1,figsize=(14,10))
-    ax1.plot(BTCUSDT_returns, label="BTCUSDT")
-    ax1.plot(ETHUSDT_returns, label="ETHUSDT")
+    ax1.plot(df_1_returns, label="df_1")
+    ax1.plot(df_2_returns, label="df_2")
     ax1.set_title("regional returns")
     ax1.legend()
-    ax2.plot(spread, label="ETHUSDT spread", color="green")
-    ax2.set_title("ETHUSDT spread")
+    ax2.plot(spread, label="df_1 - df_2 spread", color="green")
+    ax2.set_title("df_1 - df_2 spread")
     ax2.legend()
     plt.tight_layout()
     plt.show()
